@@ -1,0 +1,19 @@
+terraform {
+  required_providers {
+    confluent-kafka = {
+      version = "0.1.0"
+      source = "confluent-kafka"
+    }
+  }
+}
+
+provider "confluent-kafka" {
+  alias = "confluent"
+  bootstrap_servers = ["localhost:9093"]
+  ca_cert           = "certs/ca.pem"
+  client_cert       = "certs/cert.pem"
+  client_key        = "certs/key.pem"
+  skip_tls_verify   = true
+  username = "xxxx"
+  password = "yyyy"
+}

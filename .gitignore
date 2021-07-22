@@ -1,0 +1,13 @@
+.idea
+confluent-kafka
+example/provider.tf
+example/default.state
+terraform-provider-confluent-kafka_v0.1.0
+example/.terraform
+example/.terraform.lock.hcl
+example/*.tfstate
+example/terraform.tfstate.backup
+vendor
+example/certs
+artifacts/
+bin/
