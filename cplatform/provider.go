@@ -2,13 +2,13 @@ package cplatform
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	confluent "github.com/wayarmy/gonfluent"
+	confluent "github.com/OneMount/gonfluent"
 )
 
 var (
@@ -128,6 +128,8 @@ func Provider() *schema.Provider {
 			"kafka_topic":          topics(),
 			"cluster_role_binding": clusterRoleBindings(),
 			"kafka_topic_rbac":     kafkaTopicRBAC(),
+			"schema_registry_rbac": schemaRegistryRBAC(),
+			"connectors_rbac":      connectorsRBAC(),
 		},
 	}
 }
@@ -148,7 +150,12 @@ func providerConfigure(_ context.Context, d *schema.ResourceData) (interface{}, 
 		TLSEnabled:       d.Get("tls_enabled").(bool),
 		Timeout:          d.Get("timeout").(int),
 	}
-	kClient, err := confluent.NewSaramaClient(kConfig)
+	kClient, sarama, err := confluent.NewDefaultSaramaClient(kConfig)
+	if err != nil {
+		return nil, diag.FromErr(err)
+	}
+
+	saramaAdmin, err := confluent.NewDefaultSaramaClusterAdmin(sarama)
 	if err != nil {
 		return nil, diag.FromErr(err)
 	}
@@ -156,7 +163,7 @@ func providerConfigure(_ context.Context, d *schema.ResourceData) (interface{}, 
 	for _, v := range d.Get("bootstrap_servers").([]interface{}) {
 		baseUrl := "https://" + strings.Replace(v.(string), "9093", "8090", 1)
 		httpClient := confluent.NewDefaultHttpClient(baseUrl, username, password)
-		client := confluent.NewClient(httpClient, kClient)
+		client := confluent.NewClient(httpClient, kClient, saramaAdmin)
 		httpClient.UserAgent = UserAgent
 		bearerToken, err := client.Login()
 		if err == nil {
@@ -168,7 +175,7 @@ func providerConfigure(_ context.Context, d *schema.ResourceData) (interface{}, 
 
 	}
 
-	return nil, diag.FromErr(errors.New("cannot find any Kafka Nodes available in the list of bootstrap server"))
+	return nil, diag.FromErr(fmt.Errorf("cannot find any Kafka Nodes available in the list of bootstrap server"))
 }
 
 func dTos(key string, d *schema.ResourceData) *[]string {

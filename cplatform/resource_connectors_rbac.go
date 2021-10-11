@@ -3,33 +3,32 @@ package cplatform
 import (
 	"context"
 	"fmt"
-	"log"
-	"strings"
-
+	confluent "github.com/OneMount/gonfluent"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
-	confluent "github.com/OneMount/gonfluent"
+	"log"
+	"strings"
 )
 
-var err error
-
-// roleBindings will bind the roles to users/scope
+// schemaRegistryRBAC define the roles binding for schema registry resources
 // example:
-// resource "kafka_topic_rbac" "user_confluent_test" {
-//   principal  = "User:confluent-test"
-//   role 		= "Operation"
-//	 cluster_id = "zxvdlaskdjal"
-// 	 cluster_type = "Kafka"
-//
-//   provider = confluent-kafka.confluent
-//	}
-// Resource ID = principal + "|" + clusterId + "|" + principal + "|" + role
-func kafkaTopicRBAC() *schema.Resource {
+/*
+resource "connectors_rbac" "example_role_binding_developerwrite_connector" {
+	cluster_id = "5-2KZs0YRYCVv8YCDdfSVw"
+	connect_cluster_id = "connect-taiwan"
+	role = "DeveloperRead"
+	principal = "User:manh.do"
+	name = "system-platform-"
+	pattern_type = "PREFIXED"
+	provider = confluent-kafka.confluent
+}
+*/
+func connectorsRBAC() *schema.Resource {
 	return &schema.Resource{
-		CreateContext: kafkaTopicRBACCreate,
-		DeleteContext: kafkaTopicRBACDelete,
-		ReadContext:   kafkaTopicRBACRead,
+		CreateContext: connectorsRBACCreate,
+		DeleteContext: connectorsRBACDelete,
+		ReadContext:   connectorsRBACRead,
 
 		Schema: map[string]*schema.Schema{
 			"principal": {
@@ -53,12 +52,6 @@ func kafkaTopicRBAC() *schema.Resource {
 				DefaultFunc:  schema.EnvDefaultFunc("ROLE", "DeveloperRead"),
 				ValidateFunc: validation.StringInSlice(scopeRole, false),
 			},
-			"resource_type": {
-				Type:        schema.TypeString,
-				ForceNew:    true,
-				Required:    true,
-				DefaultFunc: schema.EnvDefaultFunc("RESOURCE_TYPE", ""),
-			},
 			"pattern_type": {
 				Type:         schema.TypeString,
 				ForceNew:     true,
@@ -73,22 +66,29 @@ func kafkaTopicRBAC() *schema.Resource {
 			"cluster_id": {
 				Type:        schema.TypeString,
 				ForceNew:    true,
-				Optional:    true,
-				Computed:    true,
-				Description: "The ID of cluster",
+				Required:    true,
+				Description: "The ID of Kafka cluster",
+			},
+			"connect_cluster_id": {
+				Type:        schema.TypeString,
+				ForceNew:    true,
+				Required:    true,
+				Description: "The ID of Kafka Connect cluster",
 			},
 		},
 	}
 }
 
-func kafkaTopicRBACRead(_ context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+func connectorsRBACRead(_ context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	c := meta.(*confluent.Client)
 	principal := d.Get("principal").(string)
 	role := d.Get("role").(string)
 	clusterId := d.Get("cluster_id").(string)
+	connectClusterId := d.Get("connect_cluster_id").(string)
 
 	cDetails := &confluent.ClusterDetails{}
 	cDetails.Clusters.KafkaCluster = clusterId
+	cDetails.Clusters.ConnectCluster = connectClusterId
 
 	roleBindings, err := c.LookupRoleBinding(principal, role, *cDetails)
 	if err != nil {
@@ -104,24 +104,26 @@ func kafkaTopicRBACRead(_ context.Context, d *schema.ResourceData, meta interfac
 		}
 	}
 
-	if r[d.Get("resource_type").(string)] != d.Get("pattern_type").(string) {
-		err = fmt.Errorf("cannot find resource_type" + d.Get("resource_type").(string) + " of" + d.Get("name").(string))
+	if r["Connector"] != d.Get("pattern_type").(string) {
+		err = fmt.Errorf("cannot find resource_type Subject of" + d.Get("name").(string))
 		log.Printf("[ERROR] Error lookup role-binding from Confluent %s", err)
 		return diag.FromErr(err)
 	}
 	return nil
 }
 
-func kafkaTopicRBACCreate(_ context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+func connectorsRBACCreate(_ context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	c := meta.(*confluent.Client)
 	principal := d.Get("principal").(string)
 	role := d.Get("role").(string)
 	clusterId:= d.Get("cluster_id").(string)
+	connectClusterId := d.Get("connect_cluster_id").(string)
 
 
 	cDetails := &confluent.ClusterDetails{
 		Clusters: confluent.Clusters{
 			KafkaCluster: clusterId,
+			ConnectCluster: connectClusterId,
 		},
 	}
 
@@ -129,7 +131,7 @@ func kafkaTopicRBACCreate(_ context.Context, d *schema.ResourceData, meta interf
 		Scope: *cDetails,
 		ResourcePatterns: []confluent.ResourcePattern{
 			{
-				ResourceType: d.Get("resource_type").(string),
+				ResourceType: "Connector",
 				Name:         d.Get("name").(string),
 				PatternType:  d.Get("pattern_type").(string),
 			},
@@ -141,20 +143,22 @@ func kafkaTopicRBACCreate(_ context.Context, d *schema.ResourceData, meta interf
 		return diag.FromErr(err)
 	}
 
-	rId := clusterId + "|" + principal + "|" + role + "|" + d.Get("resource_type").(string) + "|" + d.Get("name").(string) + "|" + d.Get("pattern_type").(string)
+	rId := clusterId + "|ConnectClusterId:" + connectClusterId + "|" + principal + "|" + role + "|Connector|" + d.Get("name").(string) + "|" + d.Get("pattern_type").(string)
 	d.SetId(rId)
 	return nil
 }
 
-func kafkaTopicRBACDelete(_ context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+func connectorsRBACDelete(_ context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	c := meta.(*confluent.Client)
 	principal := d.Get("principal").(string)
 	role := d.Get("role").(string)
 	clusterId:= d.Get("cluster_id").(string)
+	connectClusterId := d.Get("connect_cluster_id").(string)
 
 	cDetails := &confluent.ClusterDetails{
 		Clusters: confluent.Clusters{
 			KafkaCluster: clusterId,
+			ConnectCluster: connectClusterId,
 		},
 	}
 
@@ -162,7 +166,7 @@ func kafkaTopicRBACDelete(_ context.Context, d *schema.ResourceData, meta interf
 		Scope: *cDetails,
 		ResourcePatterns: []confluent.ResourcePattern{
 			{
-				ResourceType: d.Get("resource_type").(string),
+				ResourceType: "Subject",
 				Name:         d.Get("name").(string),
 				PatternType:  d.Get("pattern_type").(string),
 			},
@@ -176,4 +180,3 @@ func kafkaTopicRBACDelete(_ context.Context, d *schema.ResourceData, meta interf
 
 	return nil
 }
-

@@ -3,12 +3,13 @@ package cplatform
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
-	confluent "github.com/wayarmy/gonfluent"
+	confluent "github.com/OneMount/gonfluent"
 )
 
 var (
@@ -27,7 +28,7 @@ var (
 	scopeRole = []string{
 		"DeveloperRead",
 		"DeveloperWrite",
-		"Operator",
+		"DeveloperManage",
 		"ResourceOwner",
 	}
 	validCluster = []string{
@@ -93,6 +94,24 @@ func clusterRoleBindings() *schema.Resource {
 				Required:    true,
 				Description: "The ID of cluster",
 			},
+			"schema_registry_cluster_id": {
+				Type:        schema.TypeString,
+				ForceNew:    true,
+				Optional:    true,
+				Description: "The ID of cluster",
+			},
+			"connect_cluster_id": {
+				Type:        schema.TypeString,
+				ForceNew:    true,
+				Optional:    true,
+				Description: "The ID of cluster",
+			},
+			"ksql_cluster_id": {
+				Type:        schema.TypeString,
+				ForceNew:    true,
+				Optional:    true,
+				Description: "The ID of cluster",
+			},
 		},
 	}
 }
@@ -100,79 +119,156 @@ func clusterRoleBindings() *schema.Resource {
 func clusterRoleBindingsRead(_ context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	c := meta.(*confluent.Client)
 
+	var (
+		clusterType string
+		subClusterId string
+	)
+
+	f, err := filterClusterTypeWithClusterId(d)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+
 	clusterId := parseIdToResourcesList(d.Id())[1]
 	principal := parseIdToResourcesList(d.Id())[2]
 	role := parseIdToResourcesList(d.Id())[3]
 
-	cDetails := &confluent.ClusterDetails{}
-	var err error
-	switch clusterType := parseIdToResourcesList(d.Id())[0]; clusterType {
-	case "Kafka":
-		cDetails.Clusters.KafkaCluster = clusterId
-		_, err := c.LookupRoleBinding(principal, role, *cDetails)
-		if err == nil {
-			err = d.Set("role", role)
-		}
-		if err == nil {
-			err = d.Set("principal", principal)
-		}
-		if err == nil {
-			err = d.Set("cluster_id", clusterId)
-		}
-	case "SchemaRegistry":
-
-	case "Connect":
-
-	case "KSQL":
+	t := strings.Split(parseIdToResourcesList(d.Id())[0], ":")
+	if len(t) < 2 {
+		clusterType = parseIdToResourcesList(d.Id())[0]
+	} else {
+		clusterType = t[0]
+		subClusterId = t[1]
 	}
 
-	return diag.FromErr(err)
+	cd := confluent.ClusterDetails{}
+	cd.Clusters.KafkaCluster = clusterId
+
+	switch clusterType {
+	case "Kafka":
+
+	case "SchemaRegistry":
+		if !(contains(f, "schema_registry_cluster_id")) {
+			return diag.FromErr(fmt.Errorf("miss parameter: schema_registry_cluster_id"))
+		}
+		cd.Clusters.SchemaRegistryCluster = subClusterId
+	case "Connect":
+		if !(contains(f, "connect_cluster_id")) {
+			return diag.FromErr(fmt.Errorf("miss parameter: connect_cluster_id"))
+		}
+		cd.Clusters.ConnectCluster = subClusterId
+	case "KSQL":
+		if !(contains(f, "ksql_cluster_id")) {
+			return diag.FromErr(fmt.Errorf("miss parameter: ksql_cluster_id"))
+		}
+		cd.Clusters.KSqlCluster = subClusterId
+	}
+
+	_, err = c.LookupRoleBinding(principal, role, cd)
+	if err != nil {
+		log.Printf("[ERROR] Error getting role-binding %s from Confluent", err)
+		return diag.FromErr(err)
+	}
+
+	return nil
 }
 
 func clusterRoleBindingsCreate(_ context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	c := meta.(*confluent.Client)
+
+	f, err := filterClusterTypeWithClusterId(d)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+
 	clusterId := d.Get("cluster_id").(string)
 	principal := d.Get("principal").(string)
 	role := d.Get("role").(string)
 	clusterType := d.Get("cluster_type").(string)
+	cd := confluent.ClusterDetails{}
+	cd.Clusters.KafkaCluster = clusterId
 
+	var rId string
 	switch clusterType {
 	case "Kafka":
-		err := bindKafkaClusterRoleBinding(c, clusterId, principal, role)
-		if err != nil {
-			return diag.FromErr(err)
-		}
+		rId = clusterType + "|" + clusterId + "|" + principal + "|" + role
 	case "SchemaRegistry":
-
+		if !(contains(f, "schema_registry_cluster_id")) {
+			return diag.FromErr(fmt.Errorf("miss parameter: schema_registry_cluster_id"))
+		}
+		cd.Clusters.SchemaRegistryCluster = d.Get("schema_registry_cluster_id").(string)
+		rId = clusterType + ":" + d.Get("schema_registry_cluster_id").(string) + "|" + clusterId + "|" + principal + "|" + role
 	case "Connect":
-
+		if !(contains(f, "connect_cluster_id")) {
+			return diag.FromErr(fmt.Errorf("miss parameter: connect_cluster_id"))
+		}
+		cd.Clusters.ConnectCluster = d.Get("connect_cluster_id").(string)
+		rId = clusterType + ":" + d.Get("connect_cluster_id").(string) + "|" + clusterId + "|" + principal + "|" + role
 	case "KSQL":
+		if !(contains(f, "ksql_cluster_id")) {
+			return diag.FromErr(fmt.Errorf("miss parameter: ksql_cluster_id"))
+		}
+		cd.Clusters.KSqlCluster = d.Get("ksql_cluster_id").(string)
+		rId = clusterType + ":" + d.Get("ksql_cluster_id").(string) + "|" + clusterId + "|" + principal + "|" + role
 	}
-	d.SetId(clusterType + "|" + clusterId + "|" + principal + "|" + role)
+
+	err = c.BindPrincipalToRole(principal, role, cd)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+	d.SetId(rId)
 	return nil
 }
 
 func clusterRoleBindingsDelete(_ context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	c := meta.(*confluent.Client)
+	var (
+		clusterType string
+		subClusterId string
+	)
+
+	f, err := filterClusterTypeWithClusterId(d)
+	if err != nil {
+		return diag.FromErr(err)
+	}
 
 	clusterId := parseIdToResourcesList(d.Id())[1]
 	principal := parseIdToResourcesList(d.Id())[2]
 	role := parseIdToResourcesList(d.Id())[3]
 
-	cDetails := &confluent.ClusterDetails{}
+	t := strings.Split(parseIdToResourcesList(d.Id())[0], ":")
+	if len(t) < 2 {
+		clusterType = parseIdToResourcesList(d.Id())[0]
+	} else {
+		clusterType = t[0]
+		subClusterId = t[1]
+	}
 
-	switch clusterType := parseIdToResourcesList(d.Id())[0]; clusterType {
+	cd := confluent.ClusterDetails{}
+	cd.Clusters.KafkaCluster = clusterId
+
+	switch clusterType {
 	case "Kafka":
-		cDetails.Clusters.KafkaCluster = clusterId
-		err := c.DeleteRoleBinding(principal, role, *cDetails)
-		if err != nil {
-			diag.FromErr(err)
-		}
 	case "SchemaRegistry":
-
+		if !(contains(f, "schema_registry_cluster_id")) {
+			return diag.FromErr(fmt.Errorf("miss parameter: schema_registry_cluster_id"))
+		}
+		cd.Clusters.SchemaRegistryCluster = subClusterId
 	case "Connect":
-
+		if !(contains(f, "connect_cluster_id")) {
+			return diag.FromErr(fmt.Errorf("miss parameter: connect_cluster_id"))
+		}
+		cd.Clusters.ConnectCluster = subClusterId
 	case "KSQL":
+		if !(contains(f, "ksql_cluster_id")) {
+			return diag.FromErr(fmt.Errorf("miss parameter: ksql_cluster_id"))
+		}
+		cd.Clusters.KSqlCluster = subClusterId
+	}
+
+	err = c.DeleteRoleBinding(principal, role, cd)
+	if err != nil {
+		diag.FromErr(err)
 	}
 
 	return nil
@@ -182,13 +278,31 @@ func parseIdToResourcesList(bindId string) []string {
 	return strings.Split(bindId, "|")
 }
 
-func bindKafkaClusterRoleBinding(c *confluent.Client, clusterId, principal, role string) error {
-	cDetails := &confluent.ClusterDetails{}
-	cDetails.Clusters.KafkaCluster = clusterId
-
-	err := c.BindPrincipalToRole(principal, role, *cDetails)
-	if err != nil {
-		return err
+func filterClusterTypeWithClusterId(d *schema.ResourceData) ([]string, error) {
+	var k []string
+	if d.Get("schema_registry_cluster_id").(string) != "" {
+		k = append(k, "schema_registry_cluster_id")
 	}
-	return nil
+	if d.Get("connect_cluster_id").(string) != "" {
+		k = append(k, "connect_cluster_id")
+	}
+	if d.Get("ksql_cluster_id").(string) != "" {
+		k = append(k, "ksql_cluster_id")
+	}
+
+	if len(k) > 1 {
+		return nil, fmt.Errorf("cannot specific schema/connect/ksql at the same time")
+	}
+
+	return k, nil
+}
+
+func contains(slice []string, item string) bool {
+	set := make(map[string]struct{}, len(slice))
+	for _, s := range slice {
+		set[s] = struct{}{}
+	}
+
+	_, ok := set[item]
+	return ok
 }

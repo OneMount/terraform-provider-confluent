@@ -2,7 +2,6 @@ package cplatform
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -11,7 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	confluent "github.com/wayarmy/gonfluent"
+	confluent "github.com/OneMount/gonfluent"
 )
 
 func topics() *schema.Resource {
@@ -36,13 +35,8 @@ func topics() *schema.Resource {
 			"replication_factor": {
 				Type:        schema.TypeInt,
 				ForceNew:    false,
-				Required:    true,
+				Optional:    true,
 				Description: "Number of replication factors.",
-			},
-			"is_internal": {
-				Type:     schema.TypeBool,
-				Optional: true,
-				Computed: true,
 			},
 			"config": {
 				Type:        schema.TypeMap,
@@ -68,11 +62,17 @@ func topicsRead(_ context.Context, d *schema.ResourceData, meta interface{}) dia
 	//topicName := d.Get("topic_name").(string)
 
 	topic, err := c.GetTopic(clusterId, topicName)
-	if err == nil {
-		err = d.Set("is_internal", topic.IsInternal)
+	if err != nil {
+		log.Printf("[ERROR] Error getting topics %s from Confluent", err)
+		d.SetId("")
+		return diag.FromErr(err)
 	}
-	if err == nil {
-		err = d.Set("replication_factor", topic.ReplicationFactor)
+
+	log.Printf("[DEBUG] Setting the state from Confluent %v", topic)
+	err = d.Set("name", topic.Name)
+
+	if err != nil {
+		return diag.FromErr(err)
 	}
 
 	return diag.FromErr(err)
@@ -93,11 +93,15 @@ func topicsCreate(_ context.Context, d *schema.ResourceData, meta interface{}) d
 }
 
 func topicCreateFunc(c *confluent.Client, d *schema.ResourceData) error {
-	clusterId := d.Get("cluster_id").(string)
+	clusterId:= d.Get("cluster_id").(string)
 	topicName := d.Get("name").(string)
 	partitionsCount := d.Get("partitions").(int)
 	replicationFactor := d.Get("replication_factor").(int)
 	config := d.Get("config").(map[string]interface{})
+
+	if confluentPlacementConstraintsIsPresent(d) {
+		replicationFactor = 0
+	}
 
 	var topicConfigs []confluent.TopicConfig
 
@@ -123,7 +127,7 @@ func topicsDelete(ctx context.Context, d *schema.ResourceData, meta interface{})
 	log.Printf("[INFO] Delete topic" + d.Get("name").(string))
 	c := meta.(*confluent.Client)
 
-	clusterId := d.Get("cluster_id").(string)
+	clusterId:= d.Get("cluster_id").(string)
 	topicName := d.Id()
 
 	if err := c.DeleteTopic(clusterId, topicName); err != nil {
@@ -139,7 +143,7 @@ func topicsDelete(ctx context.Context, d *schema.ResourceData, meta interface{})
 
 func topicsUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
 	c := meta.(*confluent.Client)
-	clusterId := d.Get("cluster_id").(string)
+	clusterId:= d.Get("cluster_id").(string)
 	if err != nil {
 		return diag.FromErr(err)
 	}
@@ -149,21 +153,23 @@ func topicsUpdate(ctx context.Context, d *schema.ResourceData, meta interface{})
 
 	// update replica count of existing partitions before adding new ones
 	if d.HasChange("replication_factor") {
-		oi, ni := d.GetChange("replication_factor")
-		oldRF := oi.(int)
-		newRF := ni.(int)
-		t.ReplicationFactor = int16(newRF)
-		log.Printf("[INFO] Updating replication_factor from %d to %d", oldRF, newRF)
-		err := c.UpdateReplicationsFactor(t)
-		if err != nil {
-			return diag.FromErr(err)
-		}
+		if !(confluentPlacementConstraintsIsPresent(d)) {
+			oi, ni := d.GetChange("replication_factor")
+			oldRF := oi.(int)
+			newRF := ni.(int)
+			t.ReplicationFactor = int16(newRF)
+			log.Printf("[INFO] Updating replication_factor from %d to %d", oldRF, newRF)
+			err := c.UpdateReplicationsFactor(t)
+			if err != nil {
+				return diag.FromErr(err)
+			}
 
-		if err := waitForRFUpdate(ctx, c, d.Id()); err != nil {
-			return diag.FromErr(err)
-		}
-		if err := waitForTopicRefresh(ctx, c, d.Id(), clusterId, t); err != nil {
-			return diag.FromErr(err)
+			if err := waitForRFUpdate(ctx, c, d.Id()); err != nil {
+				return diag.FromErr(err)
+			}
+			if err := waitForTopicRefresh(ctx, c, d.Id(), clusterId, t); err != nil {
+				return diag.FromErr(err)
+			}
 		}
 	}
 
@@ -173,7 +179,7 @@ func topicsUpdate(ctx context.Context, d *schema.ResourceData, meta interface{})
 		oldPartitions := oi.(int)
 		newPartitions := ni.(int)
 		if newPartitions < oldPartitions {
-			return diag.FromErr(errors.New("cannot decrease the number of partitions of topic"))
+			return diag.FromErr(fmt.Errorf("cannot decrease the number of partitions of topic"))
 		}
 		log.Printf("[INFO] Updating partitions from %d to %d", oldPartitions, newPartitions)
 		t.Partitions = int32(newPartitions)
@@ -201,7 +207,7 @@ func topicsUpdate(ctx context.Context, d *schema.ResourceData, meta interface{})
 			}
 		}
 
-		if err := c.UpdateTopicConfigs(clusterId, d.Id(), topicConfigs); err != nil {
+		if err := c.UpdateTopicConfigs(clusterId, d.Id(),topicConfigs); err != nil {
 			return diag.FromErr(err)
 		}
 	}
@@ -210,6 +216,14 @@ func topicsUpdate(ctx context.Context, d *schema.ResourceData, meta interface{})
 	}
 
 	return nil
+}
+
+func confluentPlacementConstraintsIsPresent(d *schema.ResourceData) bool {
+	config := d.Get("config").(map[string]interface{})
+	for config["confluent.placement.constraints"] != nil {
+		return true
+	}
+	return false
 }
 
 func waitForRFUpdate(ctx context.Context, c *confluent.Client, topic string) error {
@@ -243,7 +257,7 @@ func waitForRFUpdate(ctx context.Context, c *confluent.Client, topic string) err
 	return nil
 }
 
-func waitForTopicDelete(ctx context.Context, c *confluent.Client, topic, clusterId string) error {
+func waitForTopicDelete(ctx context.Context,c *confluent.Client, topic, clusterId string) error {
 	stateConf := &resource.StateChangeConf{
 		Pending:      []string{"Updating"},
 		Target:       []string{"Ready"},
@@ -263,7 +277,7 @@ func waitForTopicDelete(ctx context.Context, c *confluent.Client, topic, cluster
 	return nil
 }
 
-func waitForTopicRefresh(ctx context.Context, c *confluent.Client, topic, clusterId string, expected confluent.Topic) error {
+func waitForTopicRefresh(ctx context.Context,c *confluent.Client, topic, clusterId string, expected confluent.Topic) error {
 	stateConf := &resource.StateChangeConf{
 		Pending:      []string{"Updating"},
 		Target:       []string{"Ready"},
@@ -291,13 +305,13 @@ func topicRefreshFunc(c *confluent.Client, topic, clusterId string, expected con
 			log.Printf("[ERROR] could not read topic %s, %s", topic, err)
 			return actual, "Error", err
 		}
-		p, err := c.GetTopicPartitions(clusterId, topic)
+		p, err  := c.GetTopicPartitions(clusterId, topic)
 		if err != nil {
 			log.Printf("[ERROR] could not read topic %s, %s", topic, err)
 			return actual, "Error", err
 		}
 
-		if int16(actual.ReplicationFactor) == expected.ReplicationFactor && int32(len(p)) == expected.Partitions {
+		if int16(actual.ReplicationFactor) == expected.ReplicationFactor && int32(len(p)) == expected.Partitions  {
 			return actual, "Ready", nil
 		}
 
@@ -316,3 +330,4 @@ func topicDeleteRefreshFunc(c *confluent.Client, topic, clusterId string) resour
 		return nil, fmt.Sprintf("cannot delete topic: %v", topic), nil
 	}
 }
+
