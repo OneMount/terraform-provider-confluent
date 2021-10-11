@@ -23,5 +23,6 @@ compile:
 	GOOS=linux GOARCH=arm go build -o bin/${FILE_NAME}_linux-arm main.go
 	GOOS=darwin GOARCH=amd64 go build -o bin/${FILE_NAME}_darwin-amd64 main.go
 	GOOS=windows GOARCH=amd64 go build -o bin/${FILE_NAME}_windows-amd64 main.go
+	GOOS=darwin GOARCH=arm go build -o bin/${FILE_NAME}_darwin-arm main.go
 
 all: prepare compile

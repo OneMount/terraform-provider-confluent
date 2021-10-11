@@ -60,7 +60,7 @@ Apply
 terraform apply
 ```
 
-### 3. Resources supported
+## 3. Resources supported
 
 - Define the provider
 
@@ -77,13 +77,13 @@ provider "confluent-kafka" {
 }
 ```
 
-#### 3.1 Topics
+### 3.1 Topics
 
 - Topic Example
 
 ```shell script
 resource "kafka_topic" "example_topic" {
-  cluster_id = "cluster-1" # Optional: If not, terraform will use first cluster in the cluster list
+  cluster_id = "kafka-cluster-id" # Optional: If not, terraform will use first cluster in the cluster list
   name = "test-terraform-confluent-provider" # Topic name
   replication_factor = 3 # Replication factor
   partitions = 5 # The number of partition
@@ -96,7 +96,7 @@ resource "kafka_topic" "example_topic" {
 }
 ```
 
-#### 3.2 Cluster role binding
+### 3.2 Cluster role binding
 
 - Will describe and bind the cluster role to principal (User or scope)
 
@@ -104,15 +104,15 @@ resource "kafka_topic" "example_topic" {
 
 ```shell
 resource "cluster_role_binding" "example_role_binding" {
-  cluster_id = "cluster-1" # Optional: If not, terraform will use first cluster in the cluster list
+  cluster_id = "kafka-cluster-id" # Optional: If not, terraform will use first cluster in the cluster list
   role = "UserAdmin" # Allow roles: "AuditAdmin", "ClusterAdmin", "DeveloperManage", "DeveloperRead", "DeveloperWrite", "Operator", "ResourceOwner", "SecurityAdmin", "SystemAdmin", "UserAdmin",
-  principal = "User:username" # Allow convention: User:<user_name> or Group:<group_name>
+  principal = "User:wayarmy" # Allow convention: User:<user_name> or Group:<group_name>
   cluster_type = "Kafka" # Support 4 types of clusters: Kafka, SchemaRegistry, KSQL, Connect
   provider = confluent-kafka.confluent
 }
 ```
 
-#### 3.3 Kafka topic RBAC
+### 3.3 Kafka topic RBAC
 
 - Will describe and bind the resource role (Not Cluster role) to principal
 
@@ -120,13 +120,69 @@ resource "cluster_role_binding" "example_role_binding" {
 
 ```shell
 resource "kafka_topic_rbac" "example_topic_rbac" {
-  principal = "User:username" # Allow convention: User:<user_name>, Group:<group_name>, User:CN=<domain>
+  principal = "User:wayarmy" # Allow convention: User:<user_name>, Group:<group_name>, User:CN=<domain>
   role = "ResourceOwner" # Allow roles: "DeveloperRead", "DeveloperWrite", "Operator", "ResourceOwner"
   resource_type = "Topic" # Allow only: Topic
   pattern_type = "PREFIXED" # Allow: PREFIXED and LITERAL
-  name = "test-" # The pattern contains in topic name
-  cluster_id = "cluster-1" # Optional: If not, terraform will use first cluster in the cluster list
+  name = "system-platform-" # The pattern contains in topic name
+  cluster_id = "kafka-cluster-id" # Optional: If not, terraform will use first cluster in the cluster list
   provider = confluent-kafka.confluent
 }
 
 ```
+
+### 3.4 Schema Registry Subject RBAC
+
+- Will describe and bind the subject acces roles to an user
+
+- Example
+
+```shell
+resource "schema_registry_rbac" "example_role_binding_developerwrite_schema_subject" {
+  cluster_id = "kafka-cluster-id"
+  schema_registry_cluster_id = "schema-registry-cluster-name"
+  role = "DeveloperWrite"
+  principal = "User:wayarmy"
+  name = "system-platform-"
+  pattern_type = "PREFIXED"
+  provider = confluent-kafka.confluent
+}
+```
+
+### 3.5 Connector RBAC
+
+- Will decribe and bind the connector access to a scope (user or another type of principal)
+
+- Example
+
+```shell
+resource "connectors_rbac" "example_role_binding_developerwrite_connector" {
+  cluster_id = "kafka-cluster-id"
+  connect_cluster_id = "connector-cluster-name"
+  role = "DeveloperRead"
+  principal = "User:wayarmy"
+  name = "system-platform-"
+  pattern_type = "PREFIXED"
+  provider = confluent-kafka.confluent
+}
+```
+
+## 5. Contributing
+
+- Clone this project
+
+```shell
+git clone git@gitlab.id.vin:sp/terraform-provider-confluent-kafka.git
+```
+
+- Build your personal environment terraform plugin for testing
+```shell
+./build.sh
+```
+
+- Run your test before push your code
+
+```shell
+go test
+```
+
