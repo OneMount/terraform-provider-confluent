@@ -20,4 +20,4 @@ jobs:
         with:
           name: binary
           path: |
-            bin
+            bin/*
