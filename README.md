@@ -1,5 +1,7 @@
 # Terraform Confluent Platform Provider
 
+[![Build](https://github.com/OneMount/terraform-provider-confluent/actions/workflows/build.yml/badge.svg)](https://github.com/OneMount/terraform-provider-confluent/actions/workflows/build.yml)
+
 This is provider for Confluent Platform, not Confluent Cloud. If you're seeking the Confluent Cloud provider, please visit [This project](https://github.com/Mongey/terraform-provider-confluentcloud). 
 
 But if you're seeking the terraform provider to implement IaC for your hosted Confluent Platform, this project is exactly what you need.
