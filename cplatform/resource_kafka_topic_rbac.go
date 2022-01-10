@@ -6,10 +6,10 @@ import (
 	"log"
 	"strings"
 
+	confluent "github.com/OneMount/gonfluent"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
-	confluent "github.com/OneMount/gonfluent"
 )
 
 var err error
@@ -66,9 +66,9 @@ func kafkaTopicRBAC() *schema.Resource {
 				ValidateFunc: validation.StringInSlice(validPatternType, false),
 			},
 			"name": {
-				Type:         schema.TypeString,
-				ForceNew:     true,
-				Required:     true,
+				Type:     schema.TypeString,
+				ForceNew: true,
+				Required: true,
 			},
 			"cluster_id": {
 				Type:        schema.TypeString,
@@ -113,11 +113,15 @@ func kafkaTopicRBACRead(_ context.Context, d *schema.ResourceData, meta interfac
 }
 
 func kafkaTopicRBACCreate(_ context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	if err := kafkaTopicRBACRead(nil, d, meta); err == nil {
+		msg := fmt.Errorf("cannot create resource existed resource_type" + d.Get("resource_type").(string) + " of" + d.Get("name").(string))
+		log.Printf("[ERROR] Resource existed when create %s", msg)
+		return diag.FromErr(msg)
+	}
 	c := meta.(*confluent.Client)
 	principal := d.Get("principal").(string)
 	role := d.Get("role").(string)
-	clusterId:= d.Get("cluster_id").(string)
-
+	clusterId := d.Get("cluster_id").(string)
 
 	cDetails := &confluent.ClusterDetails{
 		Clusters: confluent.Clusters{
@@ -150,7 +154,7 @@ func kafkaTopicRBACDelete(_ context.Context, d *schema.ResourceData, meta interf
 	c := meta.(*confluent.Client)
 	principal := d.Get("principal").(string)
 	role := d.Get("role").(string)
-	clusterId:= d.Get("cluster_id").(string)
+	clusterId := d.Get("cluster_id").(string)
 
 	cDetails := &confluent.ClusterDetails{
 		Clusters: confluent.Clusters{
@@ -176,4 +180,3 @@ func kafkaTopicRBACDelete(_ context.Context, d *schema.ResourceData, meta interf
 
 	return nil
 }
-
